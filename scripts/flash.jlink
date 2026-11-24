@@ -1,0 +1,10 @@
+ExitOnError 1
+Device STM32F103ZE
+SelectInterface SWD
+Speed 4000
+Connect
+LoadFile "c:/Users/HenrryBian/CodeBuddy/20261110233826/build/Debug/RedBull_Buzzer_PWM.hex"
+VerifyBin "c:/Users/HenrryBian/CodeBuddy/20261110233826/build/Debug/RedBull_Buzzer_PWM.bin", 0x08000000
+Reset
+Go
+Exit

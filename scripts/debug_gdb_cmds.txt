@@ -1,0 +1,134 @@
+# =====================================================================
+# 阶段 5：兜底路径——命令行 GDB 单步调试命令序列（完整脚本）
+# 生成日期：2026-11-12
+#
+# ⚠️ 执行前需用户确认：
+#   步骤 A（GDB 内 load 命令）会把 .elf 下载到目标 Flash —— 必须先获得用户
+#   当轮显式授权（例：「确认烧录」）。若调试已烧录的同版本固件，可跳过 load
+#   只用 monitor reset + 断点调试（步骤 B 变体）。
+#
+# 工具绝对路径（docs/env_check.md 8.3 实测，不依赖 PATH）：
+#   GDB Server : C:\Program Files\SEGGER\JLink_V818\JLinkGDBServerCL.exe
+#   GDB        : C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bin\arm-none-eabi-gdb.exe
+#
+# 参数口径出处（不臆造）：
+#   -device STM32F103ZE -if SWD -speed 4000 -port 2331 → GDB Server 设置回显实测生效
+#     （docs/env_check.md 354/372/418 行；2026-11-12 本阶段复测同口径连接成功）
+#   GDB Server 默认端口 2331 → 启动回显 "GDB Server Listening port: 2331"（阶段 1 实测）
+#
+# 执行方式（两个 CodeBuddy 内置终端，或一个终端先后台 Server）：
+#   终端 1（Server，保持运行）：
+#     & "C:\Program Files\SEGGER\JLink_V818\JLinkGDBServerCL.exe" `
+#         -device STM32F103ZE -if SWD -speed 4000 -port 2331 -nogui
+#     （预期输出：Target device: STM32F103ZE / Target interface: SWD /
+#       Target voltage: 3.31 V / Listening on TCP/IP port 2331 / Waiting for GDB connection...
+#       —— 即共用③的「识别器件并 halt」证据）
+#   终端 2（GDB，交互式逐条执行或 -x 批量）：
+#     & "C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bin\arm-none-eabi-gdb.exe"
+#     然后按下表逐条执行。批量方式：gdb -batch -x scripts\debug_gdb_cmds.txt
+#     （-batch 执行完自动退出，输出全部留在终端可回传）
+#
+# 串口观察（硬验收项）：另开 COM3 115200-8N1 终端（PuTTY/Tera Term 等），
+#   全程保持打开。断点停住时串口必须停止输出新日志；continue 后恢复输出。
+# =====================================================================
+
+# ---- 步骤 A：加载符号与（授权后）下载固件 ----
+file c:/Users/HenrryBian/CodeBuddy/20261110233826/build/Debug/RedBull_Buzzer_PWM.elf
+# 预期输出：Reading symbols from c:/Users/.../RedBull_Buzzer_PWM.elf...   （无 error）
+
+target remote localhost:2331
+# 预期输出：0x0800xxxx in ?? ()   （连上后内核已被 Server halt，停在 Flash 区）
+# Server 侧同步出现：Halting core... Connected to target / GDB client connected
+
+monitor reset
+# 预期输出（Server 侧）：Resetting target / Target halted（复位后停在复位向量处）
+
+# --- 以下 load 命令仅在用户显式授权烧录后执行；未授权则注释掉这两行 ---
+load
+# 预期输出（阶段 3/4 同口径实测）：
+#   Loading section .isr_vector, size 0x1e4  lma 0x8000000
+#   Loading section .text,  ... lma 0x80001e4
+#   Start address 0x080008f4, load size 15880
+#   Transfer rate: ~380 KB/sec ...
+#   Server 侧：Comparing flash ... Done. Erasing flash ... Done. Programming flash ... Done.
+monitor reset
+# 预期输出：复位目标，使新固件从头启动（复位后内核在 Flash）
+
+# ---- 步骤 B：断点 + 单步 + 变量/寄存器观察 ----
+break Buzzer_Tick
+# 预期输出：Breakpoint 1 at 0x0800xxxx: file .../Core/Src/buzzer.c, line 156.
+# （行号=函数入口所在行；出现 Breakpoint 编号即为「断点可设」验收证据）
+
+continue
+# 预期输出：Continuing.   随后：
+#   Breakpoint 1, Buzzer_Tick () at .../Core/Src/buzzer.c:160
+# （断点稳定命中；此时 COM3 串口终端应【停止输出新日志】——共用硬验收项）
+
+next
+# 预期输出：160   if (s_started == 0U)  → 165   now = HAL_GetTick();  （逐句推进，带行号源码）
+
+next
+# 预期输出：167   if (now < s_seg_end_tick)  → 169 或 176 行（视段是否到期）
+
+# ---- 步骤 C：读取四个状态变量（volatile，-O0 -g3 全保留） ----
+print g_buzzer_seg_index
+# 预期输出：$1 = 0..7   （当前段索引；与序列表段号 = 索引+1 对应）
+print g_buzzer_freq_hz
+# 预期输出：$2 = 2（响段）或 0（停段）
+print g_buzzer_duty_pct
+# 预期输出：$3 = 100（响段）或 0（停段）
+print g_buzzer_remain_ms
+# 预期输出：$4 = 当前段剩余毫秒数（150/600/800/2000 内递减）
+
+# 段切换验证：continue 到下一段再断点命中后重复 print，
+# g_buzzer_seg_index 递增、freq/duty 在 2/100 ↔ 0/0 间切换即为「随段切换变化」。
+
+# ---- 步骤 D：寄存器观测（info registers + 外设寄存器内存读） ----
+info registers pc sp xpsr
+# 预期输出：pc 0x0800xxxx（Flash 区）、sp 0x2000xxxx、xpsr 0x...（Thumb 位=1）
+
+x/1xw 0x40000028
+# 预期输出：0x40000028 <TIM2 PSC>: 0x00000047   （PSC=71，10 kHz 时基）
+x/1xw 0x4000002c
+# 预期输出：0x4000002c <TIM2 ARR>: 0x00000063   （ARR=99）
+# （地址出处：SVD 实测 TIM2 baseAddress 0x40000000，PSC addressOffset 0x28 / ARR 0x2C）
+x/1xw 0x40021004
+# 预期输出：0x40021004 <RCC CFGR>: 0x0000040a
+# （SW=PLL、SWS=PLL、PPRE1=/2；地址出处：SVD 实测 RCC baseAddress 0x40021000 +
+#   CFGR addressOffset 0x4 —— 注意 F1 的 CFGR 在 0x4，0x8 是 CIR。初版文档误写
+#   0x40021008 读到的是 CIR（恒 0），已按 SVD 实测纠正，详见 docs/stage5_report.md）
+x/1xw 0x40010c0c
+# 预期输出：GPIOB ODR bit2 = 1（响段）或 0（停段）；如 0x00000014 / 0x00000010
+# （GPIOB->ODR，阶段 4 实测口径）
+x/1xw 0x40013808
+# 预期输出：0x40013808 <USART1 BRR>: 0x271   （115200 @72 MHz，阶段 3 口径）
+x/1xw 0x00000004
+# 预期输出：0x4: 0x080008f5   （复位向量指向 Flash → 从主 Flash 启动，BOOT0=0）
+
+# ---- 步骤 E：恢复运行与收尾 ----
+continue
+# 预期输出：Continuing.
+# （COM3 串口终端应【恢复输出】新的段切换 INFO——共用硬验收项「continue 后恢复」；
+#   若在断点停留期间串口已停，此命令后 4150 ms 循环内必然出现新日志）
+
+# 需要再次暂停观察时：Ctrl+C（GDB 前台）会 halt 内核，重复步骤 C/D。
+monitor reset
+# 预期输出：复位目标（可选；如需让固件重新从头跑一遍完整序列）
+
+detach
+# 预期输出：Detaching from program: .../RedBull_Buzzer_PWM.elf, Remote target
+#           [Inferior 1 (Remote target) detached]
+quit
+# 预期输出：退出 GDB；Server 端显示 GDB closed TCP/IP connection ... Shutting down...
+# （-singlerun 模式下 Server 随断开自行退出；收尾核验 PORT_2331 free、无残留进程）
+
+# =====================================================================
+# 局限性说明（如实）：
+#   1. 无图形化变量视图/SVD 外设树：变量与寄存器均以 print/x 文本形式观测；
+#   2. 单步粒度 = 源码行（next），无 F10/F11 视觉区分，进入函数需 step；
+#   3. TIM2 中断 10 kHz 高频触发，长时间单步会频繁被 ISR 断点打断
+#      （建议断点只设在 Buzzer_Tick()，勿在 Buzzer_IsrUpdateOutput() 长停）；
+#   4. 断点暂停期间 SysTick/TIM2 仍在计数，恢复后 HAL_GetTick 时基自动追平，
+#      序列顺序不变（阶段 4 已实测）；
+#   5. 串口观察依赖外部 COM3 终端，GDB 无法替代（严禁 SWO/RTT）。
+# =====================================================================

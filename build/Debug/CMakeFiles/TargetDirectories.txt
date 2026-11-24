@@ -1,0 +1,3 @@
+C:/Users/HenrryBian/CodeBuddy/20261110233826/build/Debug/CMakeFiles/RedBull_Buzzer_PWM.elf.dir
+C:/Users/HenrryBian/CodeBuddy/20261110233826/build/Debug/CMakeFiles/edit_cache.dir
+C:/Users/HenrryBian/CodeBuddy/20261110233826/build/Debug/CMakeFiles/rebuild_cache.dir
