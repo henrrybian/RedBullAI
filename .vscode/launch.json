@@ -1,0 +1,21 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "J-Link SWD: RedBull Buzzer PWM (STM32F103ZE)",
+			"type": "cortex-debug",
+			"request": "launch",
+			"cwd": "${workspaceFolder}",
+			"executable": "${workspaceFolder}\\build\\Debug\\RedBull_Buzzer_PWM.elf",
+			"servertype": "jlink",
+			"serverpath": "C:\\Program Files\\SEGGER\\JLink_V818\\JLinkGDBServerCL.exe",
+			"device": "STM32F103ZE",
+			"interface": "swd",
+			"runToEntryPoint": "main",
+			"armToolchainPath": "C:\\Program Files (x86)\\Arm GNU Toolchain arm-none-eabi\\14.2 rel1\\bin",
+			"svdFile": "C:\\Users\\HenrryBian\\AppData\\Local\\Programs\\EmbeddedTools\\Keil.STM32F1xx_DFP.2.4.1\\SVD\\STM32F103xx.svd",
+			"preLaunchTask": "CMake Debug Build",
+			"showDevDebugOutput": "none"
+		}
+	]
+}
