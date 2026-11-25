@@ -198,11 +198,11 @@ void Buzzer_IsrUpdateOutput(void)
      HAL_GPIO_WritePin 内部为单次 BSRR/BRR 写，O(1)，无读改写、无除法、无 printf。 */
   if (cnt < s_pwm_high_ticks)
   {
-    //HAL_GPIO_WritePin(BUZZER_GPIO_PORT, BUZZER_GPIO_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(BUZZER_GPIO_PORT, BUZZER_GPIO_PIN, GPIO_PIN_SET);
   }
   else
   {
-    //HAL_GPIO_WritePin(BUZZER_GPIO_PORT, BUZZER_GPIO_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(BUZZER_GPIO_PORT, BUZZER_GPIO_PIN, GPIO_PIN_RESET);
   }
 }
  
