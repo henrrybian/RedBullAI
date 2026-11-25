@@ -18,6 +18,9 @@
 #include "stm32f1xx_it.h"
 #include "debug_log.h"
 #include "buzzer.h"
+#include "feature_config.h"
+#include "feature_switch.h"
+#include "test_interface.h"
 
 UART_HandleTypeDef huart1 = {0};
 TIM_HandleTypeDef  htim2  = {0};
@@ -84,11 +87,14 @@ void MX_GPIO_Init(void)
 
   /* 阶段 4：PB2（BEEP/BOOT1，pin48）配置为推挽输出。复位默认 ODR2=0 → 上电即静音；
      鸣叫电平由 TIM2 中断的 Buzzer_IsrUpdateOutput() 驱动（高电平有效）。
-     JP9 经 R25 10K 弱驱动，推挽输出可覆盖，无电平冲突（@docs/hardware_pins.md 70 行）。 */
+     JP9 经 R25 10K 弱驱动，推挽输出可覆盖，无电平冲突（@docs/hardware_pins.md 70 行）。
+     FEATURE_BUZZER_ENABLED=0 时不配置 PB2，引脚保持复位默认输入态，不产生任何电平。 */
+#if FEATURE_BUZZER_ENABLED
   gpio.Pin   = GPIO_PIN_2;
   gpio.Mode  = GPIO_MODE_OUTPUT_PP;
   gpio.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &gpio);
+#endif
 }
 
 void MX_USART1_UART_Init(void)
@@ -162,12 +168,21 @@ int main(void)
   SystemClock_Config();
   MX_GPIO_Init();
   MX_USART1_UART_Init();
+#if FEATURE_BUZZER_ENABLED
   MX_TIM2_Init();
 
   if (HAL_TIM_Base_Start_IT(&htim2) != HAL_OK)
   {
     Error_Handler();
   }
+#endif
+
+  /* 运行期功能开关：必须在蜂鸣器初始化之后、任何开关操作之前；
+     编译期关闭蜂鸣器时 Feature_Init() 仍要把所有槽位置为安全默认（全关）。 */
+  Feature_Init();
+#if FEATURE_TEST_ENABLED
+  Test_Init();
+#endif
 
   /* 运行态频率快照：SystemCoreClock 由官方 HAL_RCC_ClockConfig 更新，
      这里同时保留四个 HAL_RCC_Get*Freq() 实测值供日志与调试器观察。 */
@@ -186,13 +201,29 @@ int main(void)
            (unsigned long)g_sysclk_hz, (unsigned long)DEBUG_USART_BAUDRATE);
 
   /* 阶段 4：启动默认鸣叫序列（三短鸣 + 间歇 + 一长鸣 + 收尾静音，循环）。
-     序列与参数见 @docs/buzzer_sequence.md；启动日志在其后追加一条 INFO。 */
-  Buzzer_Start();
+     序列与参数见 @docs/buzzer_sequence.md；启动日志在其后追加一条 INFO。
+     编译期 FEATURE_BUZZER_ENABLED=0 时整段不编译，PB2 常低、无 TIM2 中断。 */
+#if FEATURE_BUZZER_ENABLED
+  if (Feature_IsOn(FEATURE_ID_BUZZER) != 0U)
+  {
+    Buzzer_Start();
+  }
+#endif
+
+#if FEATURE_TEST_ENABLED
+  LOG_INFO("TEST interface ready: call Test_Request() or set g_test_request=1 in debugger");
+#endif
 
   for (;;)
   {
-    /* 阶段 4：主循环只做一件事——调用序列推进器（非阻塞 O(1) 状态机，
-       基于 HAL_GetTick()，段到期才切换并打印一条 INFO，无 HAL_Delay/忙等）。 */
+#if FEATURE_BUZZER_ENABLED
+    /* 先应用开关（状态未变则 O(1) 返回），再推进序列（非阻塞 O(1)）。 */
+    Buzzer_ApplySwitch();
     Buzzer_Tick();
+#endif
+#if FEATURE_TEST_ENABLED
+    /* 测试请求：未请求时只读一个 volatile 字节即返回；请求时跑一轮内置用例。 */
+    Test_Poll();
+#endif
   }
 }

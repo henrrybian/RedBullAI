@@ -48,6 +48,21 @@ extern volatile uint32_t g_buzzer_remain_ms;   /* 当前段剩余时长（ms） 
 void Buzzer_Start(void);
 
 /**
+  * @brief  运行期开关：经 @feature_switch.h 设置 FEATURE_ID_BUZZER 并立即生效。
+  *         on=0 → 关闭：PB2 强制常低（静音）、序列停止推进、日志仅一次；
+  *         非 0 → 打开：若序列未启动则从段 1 启动，否则从当前段恢复。
+  * @note   仅允许主线程调用；不要在中段服务函数内调用。
+  */
+void Buzzer_SetEnabled(uint8_t on);
+
+/**
+  * @brief  把开关表的当前状态应用到蜂鸣器外设（主循环每轮调用一次，O(1)）。
+  *         用于捕获调试器直接写 g_feature_state[] 造成的外部切换；
+  *         状态未变化时立即返回，不产生日志与多余 GPIO 写。
+  */
+void Buzzer_ApplySwitch(void);
+
+/**
   * @brief  序列推进器（主循环每个循环调用一次）：O(1)、无阻塞、无动态内存。
   * @note   段未到期时只刷新剩余时长；到期时切换段参数并输出一条 INFO 日志。
   *         严禁在中断内调用；严禁改为轮询等待（禁止 HAL_Delay/忙等）。

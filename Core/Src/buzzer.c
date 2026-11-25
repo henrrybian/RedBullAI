@@ -27,6 +27,7 @@
 #include "buzzer.h"
 #include "main.h"
 #include "debug_log.h"
+#include "feature_switch.h"
 
 /* ------------------------------------------------------------------ */
 /* 时序常量：与 @docs/clock_tree.md 第 5 节推导一致                     */
@@ -86,6 +87,7 @@ static volatile uint32_t s_pwm_high_ticks   = 0U; /* 高电平 tick 数；0=常�
 
 static uint8_t  s_started     = 0U;  /* 序列是否已启动 */
 static uint32_t s_seg_end_tick = 0U; /* 当前段结束时刻（HAL_GetTick 口径） */
+static uint8_t  s_switch_applied = 0xFFU; /* 上一次已应用到外设的开关值；0xFF=未初始化 */
 
 /**
   * @brief  装载一段：把「频率/占空比」换算成 ISR 预比较值（除法在此完成，ISR 内禁止）。
@@ -143,6 +145,7 @@ static void Buzzer_LoadSegment(uint32_t index, uint32_t now_tick)
 void Buzzer_Start(void)
 {
   s_started = 1U;
+  s_switch_applied = Feature_IsOn(FEATURE_ID_BUZZER);  /* 与开关表同步，避免主循环首轮重复装载 */
   Buzzer_LoadSegment(0U, HAL_GetTick());
 
   /* 序列启动日志：一条 INFO，参数与序列表逐项一致（见 buzzer_sequence.md 第 2 节） */
@@ -153,9 +156,63 @@ void Buzzer_Start(void)
            (unsigned int)s_sequence[0U].duration_ms);
 }
 
+/**
+  * @brief  把运行期开关状态应用到蜂鸣器外设（主循环每轮调用，O(1)）。
+  *         仅在状态变化时动作：关闭 → PB2 强制常低 + 停序列；打开 → 启动/恢复序列。
+  *         同时捕获调试器直接改写 g_feature_state[] 的外部切换。
+  */
+void Buzzer_ApplySwitch(void)
+{
+  uint8_t on = Feature_IsOn(FEATURE_ID_BUZZER);
+  uint32_t primask;
+
+  if (on == s_switch_applied)
+  {
+    return;
+  }
+  s_switch_applied = on;
+
+  if (on == 0U)
+  {
+    /* 关闭：临界区内清零高电平窗口，ISR 后续比较恒为低；并立即强拉 PB2 低 */
+    s_started = 0U;
+    primask = __get_PRIMASK();
+    __disable_irq();
+    s_pwm_high_ticks = 0U;
+    s_pwm_counter    = 0U;
+    __set_PRIMASK(primask);
+    HAL_GPIO_WritePin(BUZZER_GPIO_PORT, BUZZER_GPIO_PIN, GPIO_PIN_RESET);
+    LOG_INFO("BUZZER switch=OFF muted (PB2 low, sequence stopped)");
+  }
+  else
+  {
+    if (s_started == 0U)
+    {
+      Buzzer_Start();   /* 从段 1 启动，保留原有 start 日志格式 */
+    }
+    else
+    {
+      Buzzer_LoadSegment(g_buzzer_seg_index, HAL_GetTick());  /* 恢复当前段并重置时基 */
+      LOG_INFO("BUZZER switch=ON resumed seg=%u", (unsigned int)(g_buzzer_seg_index + 1U));
+    }
+  }
+}
+
+void Buzzer_SetEnabled(uint8_t on)
+{
+  Feature_Set(FEATURE_ID_BUZZER, on);
+  Buzzer_ApplySwitch();
+}
+
 void Buzzer_Tick(void)
 {
   uint32_t now;
+
+  /* 开关关闭时不推进序列、不打印；即使调试器直接改状态也立即生效 */
+  if (Feature_IsOn(FEATURE_ID_BUZZER) == 0U)
+  {
+    return;
+  }
 
   if (s_started == 0U)
   {
@@ -186,7 +243,18 @@ void Buzzer_Tick(void)
 
 void Buzzer_IsrUpdateOutput(void)
 {
-  uint32_t cnt = s_pwm_counter + 1U;
+  uint32_t cnt;
+
+  /* 运行期开关的中断侧兜底：只读 volatile 字节 + 比较 + 写 GPIO，无 printf/除法/循环/函数调用。
+     直接读全局数组而不调 Feature_IsOn()，守住中断内「无函数调用」约束；
+     即使调试器直接改 g_feature_state[] 而未走 ApplySwitch，也能保证关闭即刻静音。 */
+  if (g_feature_state[FEATURE_ID_BUZZER] == 0U)
+  {
+    HAL_GPIO_WritePin(BUZZER_GPIO_PORT, BUZZER_GPIO_PIN, GPIO_PIN_RESET);
+    return;
+  }
+
+  cnt = s_pwm_counter + 1U;
 
   if (cnt >= s_pwm_period_ticks)
   {

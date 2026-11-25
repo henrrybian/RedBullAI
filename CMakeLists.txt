@@ -38,10 +38,17 @@ endif()
 set(DEBUG_LOG_LEVEL ${DEBUG_LOG_LEVEL_DEFAULT} CACHE STRING "编译期日志等级：0=OFF 1=ERROR 2=WARN 3=INFO 4=DEBUG")
 set_property(CACHE DEBUG_LOG_LEVEL PROPERTY STRINGS 0 1 2 3 4)
 
+# 功能模块编译期总开关（默认 1；可用 cmake -DXXX=0 关闭，例如关闭蜂鸣器跑其他模块测试）
+option(FEATURE_BUZZER_ENABLED "编译蜂鸣器 PWM 业务并上电调度" ON)
+option(FEATURE_BUZZER_DEFAULT_ON "蜂鸣器上电默认运行态（仅 BUZZER_ENABLED=ON 时有效）" ON)
+option(FEATURE_TEST_ENABLED "编译可注册测试接口框架" ON)
+
 set(APP_SOURCES
     Core/Src/main.c
     Core/Src/debug_uart.c
     Core/Src/buzzer.c
+    Core/Src/feature_switch.c
+    Core/Src/test_interface.c
     Core/Src/stm32f1xx_it.c
     Core/Src/system_stm32f1xx.c
     startup_stm32f103xe.s
@@ -80,6 +87,9 @@ target_compile_definitions(${TARGET_ELF} PRIVATE
     STM32F103xE
     USE_HAL_DRIVER
     DEBUG_LOG_LEVEL=${DEBUG_LOG_LEVEL}
+    FEATURE_BUZZER_ENABLED=$<BOOL:${FEATURE_BUZZER_ENABLED}>
+    FEATURE_BUZZER_DEFAULT_ON=$<BOOL:${FEATURE_BUZZER_DEFAULT_ON}>
+    FEATURE_TEST_ENABLED=$<BOOL:${FEATURE_TEST_ENABLED}>
 )
 
 target_compile_options(${TARGET_ELF} PRIVATE
